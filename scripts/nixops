@@ -22,6 +22,7 @@ import logging.handlers
 import syslog
 import json
 import pipes
+from nixops.nix_expr import RawValue, Function, Call, nixmerge, py2nix
 
 # For 14.04 user convenience.
 import libcloud.security
@@ -384,6 +385,17 @@ def op_restore():
     depl = open_deployment()
     depl.restore(include=args.include or [], exclude=args.exclude or [], backup_id=args.backup_id, devices=args.devices or [])
 
+def op_dump_debug():
+    depl = open_deployment()
+    depl.evaluate_active(include=args.include or [], exclude=args.exclude or [], kill_obsolete=False)
+    p = depl.get_physical_spec()
+    nixops.util.write_file("physical.nix", p)
+    args2 = {key: RawValue(val) for key, val in depl.args.iteritems()}
+    exprs_ = [RawValue(x) if x[0] == '<' else x for x in depl.nix_exprs]
+    netexpr = py2nix(exprs_, inline=True)
+    argexpr = py2nix(args2, inline=True)
+    expr = "{ deployment = import <nixops/eval-machine-info.nix> { networkExprs = [ ./physical.nix ] ++ " + netexpr + "; args = " + argexpr + "; uuid = \"" + depl.uuid + "\"; deploymentName = \"" + (depl.name if depl.name else "") + "\"; }; names = [ \"c-a-1\" ]; }"
+    nixops.util.write_file("nixops2.nix", expr)
 
 def op_deploy():
     depl = open_deployment()
@@ -799,6 +811,7 @@ def add_common_deployment_options(subparser):
     subparser.add_argument('--max-concurrent-activate', type=int, default=-1, metavar='N', help='maximum number of concurrent machine activations')
     subparser.add_argument('--no-sync', action='store_true', help='do not flush buffers to disk')
 
+
 subparser = add_subparser('deploy', help='deploy the network configuration')
 subparser.set_defaults(op=op_deploy)
 subparser.add_argument('--kill-obsolete', '-k', action='store_true', help='kill obsolete virtual machines')
@@ -814,6 +827,11 @@ subparser.add_argument('--allow-recreate', action='store_true', help='recreate r
 subparser.add_argument('--always-activate', action='store_true',
                        help='activate unchanged configurations as well')
 add_common_deployment_options(subparser)
+
+subparser = add_subparser('dump-debug-expression', help='dump a debug nix expression')
+subparser.set_defaults(op=op_dump_debug)
+subparser.add_argument('--include', nargs='+', metavar='MACHINE-NAME', help='include only the specified machines')
+subparser.add_argument('--exclude', nargs='+', metavar='MACHINE-NAME', help='... except the specified machines')
 
 subparser = add_subparser('send-keys', help='send encryption keys')
 subparser.set_defaults(op=op_send_keys)
